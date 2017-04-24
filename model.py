@@ -204,7 +204,7 @@ class DCGAN(object):
         print("Inside except")
         raise ValueError("Could not load.", filepath_sample_z_fixed) 
     else:
-      sample_z = np.random.uniform(-1, 1, size=(self.sample_num , config.z_dim))
+      sample_z = np.random.uniform(-1, 1, size=(self.sample_num , self.z_dim))
       print("Made random z, size: {}".format(sample_z.shape))
 
     if config.dataset == 'mnist':
@@ -378,10 +378,12 @@ class DCGAN(object):
         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
 
         # Manual toggle for fully-connected layers.
-        if 0:
-          h5 = tf.layers.dense(inputs=tf.reshape(h3, [self.batch_size, -1]), units=1024, activation=tf.nn.relu) 
-          h6 = tf.layers.dense(h5, units=100, activation=tf.nn.relu) 
-          return tf.nn.sigmoid(h6), h6
+        if 1:
+          h5 = tf.layers.dense(inputs=tf.reshape(h3, [self.batch_size, -1]), units=100, activation=tf.nn.relu)
+          #h6 = tf.layers.dense(h5, units=100, activation=tf.nn.relu)
+          h7 = linear(tf.reshape(h5, [self.batch_size, -1]), 1, 'd_h5_lin')
+          return tf.nn.sigmoid(h7), h7
+
         else:
           return tf.nn.sigmoid(h4), h4
 
