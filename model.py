@@ -1,4 +1,5 @@
 from __future__ import division
+import sys
 import os
 import time
 import math
@@ -87,9 +88,12 @@ class DCGAN(object):
       tf.float32, [self.batch_size] + image_dims, name='real_images')
     self.sample_inputs = tf.placeholder(
       tf.float32, [self.sample_num] + image_dims, name='sample_inputs')
+    self.heldout_inputs = tf.placeholder(
+      tf.float32, [self.sample_num] + image_dims, name='heldout_inputs')
 
     inputs = self.inputs
     sample_inputs = self.sample_inputs
+    heldout_inputs = self.heldout_inputs
 
     self.z = tf.placeholder(
       tf.float32, [None, self.z_dim], name='z')
@@ -104,14 +108,22 @@ class DCGAN(object):
       self.D_, self.D_logits_ = \
           self.discriminator(self.G, self.y, reuse=True)
     else:
+      # Compute D values for in-sample, generated, and heldout inputs.
+
       self.G = self.generator(self.z)
       self.D, self.D_logits = self.discriminator(inputs)
 
-      self.sampler = self.sampler(self.z)
+      self.sampler = self.sampler(self.z)  # Samples that appear in /samples.
       self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
 
+      self.D_heldout, self.D_logits_heldout = self.discriminator(heldout_inputs, reuse=True)
+
+    # Make histogram summaries of D values.
+    self.d_heldout_sum = histogram_summary("d_heldout", self.D_heldout)
     self.d_sum = histogram_summary("d", self.D)
     self.d__sum = histogram_summary("d_", self.D_)
+
+    # Make image summaries.
     self.G_sum = image_summary("G", self.G)
 
     def sigmoid_cross_entropy_with_logits(x, y):
@@ -120,20 +132,30 @@ class DCGAN(object):
       except:
         return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, targets=y)
 
+    # Compute D loss for heldout, in-sample, and generated inputs.
+    self.d_loss_real_heldout = tf.reduce_mean(
+      sigmoid_cross_entropy_with_logits(self.D_logits_heldout, tf.ones_like(self.D_heldout)))
     self.d_loss_real = tf.reduce_mean(
       sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
     self.d_loss_fake = tf.reduce_mean(
       sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
+
+    self.d_loss = self.d_loss_real + self.d_loss_fake
+    self.d_loss_heldout = self.d_loss_real_heldout + self.d_loss_fake
+
+    # Compute G loss.
     self.g_loss = tf.reduce_mean(
       sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
 
+    # Make scalar summaries of components of D losses.
+    self.d_loss_real_heldout_sum = scalar_summary("d_loss_real_heldout", self.d_loss_real_heldout)
     self.d_loss_real_sum = scalar_summary("d_loss_real", self.d_loss_real)
     self.d_loss_fake_sum = scalar_summary("d_loss_fake", self.d_loss_fake)
-                          
-    self.d_loss = self.d_loss_real + self.d_loss_fake
 
-    self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
+    # Make scalar summaries of total D and G losses.
+    self.d_loss_heldout_sum =  scalar_summary("d_loss_heldout", self.d_loss_heldout)
     self.d_loss_sum = scalar_summary("d_loss", self.d_loss)
+    self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
 
     t_vars = tf.trainable_variables()
 
@@ -147,7 +169,10 @@ class DCGAN(object):
     if config.dataset == 'mnist':
       data_X, data_y = self.load_mnist()
     else:
-      data = glob(os.path.join("./data", config.dataset, self.input_fname_pattern))
+      # Split files into full data, heldout set, and data used for training.
+      full_data = glob(os.path.join("./data", config.dataset, self.input_fname_pattern))
+      heldout_files = full_data[:64]
+      data = full_data[64:]
     #np.random.shuffle(data)
 
     d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
@@ -159,19 +184,34 @@ class DCGAN(object):
     except:
       tf.initialize_all_variables().run()
 
-    self.g_sum = merge_summary([self.z_sum, self.d__sum,
-      self.G_sum, self.d_loss_fake_sum, self.g_loss_sum])
-    self.d_sum = merge_summary(
-        [self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
-    self.writer = SummaryWriter("./logs", self.sess.graph)
+    self.g_sum = merge_summary([self.z_sum, self.d__sum, self.G_sum,
+        self.d_loss_fake_sum, self.g_loss_sum])
+    self.d_sum = merge_summary([self.z_sum, self.d_sum, self.d_loss_real_sum,
+        self.d_loss_sum, self.d_loss_real_heldout_sum, self.d_loss_heldout_sum])
+    try:
+      tag = config.sample_dir.split("/")[1].split("_")[1]
+      self.writer = SummaryWriter("./logs/logs_"+tag, self.sess.graph)
+    except:
+      self.writer = SummaryWriter("./logs", self.sess.graph)
 
-    sample_z = np.random.uniform(-1, 1, size=(self.sample_num , self.z_dim))
-    
+    # Load fixed sample_z, or generate one.
+    if config.fixed_z:
+      try:
+        filepath_sample_z_fixed = "./sample_z_fixed.npy"
+        sample_z = np.load(filepath_sample_z_fixed)
+        print("Found stored fixed_z.")
+      except:
+        print("Inside except")
+        raise ValueError("Could not load.", filepath_sample_z_fixed) 
+    else:
+      sample_z = np.random.uniform(-1, 1, size=(self.sample_num , config.z_dim))
+      print("Made random z, size: {}".format(sample_z.shape))
+
     if config.dataset == 'mnist':
       sample_inputs = data_X[0:self.sample_num]
       sample_labels = data_y[0:self.sample_num]
     else:
-      sample_files = data[0:self.sample_num]
+      in_sample_files = data[0:self.sample_num]
       sample = [
           get_image(sample_file,
                     input_height=self.input_height,
@@ -179,11 +219,21 @@ class DCGAN(object):
                     resize_height=self.output_height,
                     resize_width=self.output_width,
                     is_crop=self.is_crop,
-                    is_grayscale=self.is_grayscale) for sample_file in sample_files]
+                    is_grayscale=self.is_grayscale) for sample_file in in_sample_files]
+      heldout = [
+          get_image(heldout_file,
+                    input_height=self.input_height,
+                    input_width=self.input_width,
+                    resize_height=self.output_height,
+                    resize_width=self.output_width,
+                    is_crop=self.is_crop,
+                    is_grayscale=self.is_grayscale) for heldout_file in heldout_files]
+
       if (self.is_grayscale):
         sample_inputs = np.array(sample).astype(np.float32)[:, :, :, None]
       else:
         sample_inputs = np.array(sample).astype(np.float32)
+        heldout_sample_inputs = np.array(heldout).astype(np.float32)
   
     counter = 1
     start_time = time.time()
@@ -198,8 +248,8 @@ class DCGAN(object):
       if config.dataset == 'mnist':
         batch_idxs = min(len(data_X), config.train_size) // config.batch_size
       else:      
-        data = glob(os.path.join(
-          "./data", config.dataset, self.input_fname_pattern))
+        #data = glob(os.path.join(
+        #  "./data", config.dataset, self.input_fname_pattern))
         batch_idxs = min(len(data), config.train_size) // config.batch_size
 
       for idx in xrange(0, batch_idxs):
@@ -230,26 +280,21 @@ class DCGAN(object):
             feed_dict={ 
               self.inputs: batch_images,
               self.z: batch_z,
-              self.y:batch_labels,
+              self.y: batch_labels,
             })
           self.writer.add_summary(summary_str, counter)
 
-          # Update G network
+          # Update G network, twice.
           _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={
-              self.z: batch_z, 
-              self.y:batch_labels,
-            })
+            feed_dict={self.z: batch_z, self.y: batch_labels})
           self.writer.add_summary(summary_str, counter)
-
-          # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
           _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={ self.z: batch_z, self.y:batch_labels })
+            feed_dict={self.z: batch_z, self.y: batch_labels})
           self.writer.add_summary(summary_str, counter)
           
           errD_fake = self.d_loss_fake.eval({
               self.z: batch_z, 
-              self.y:batch_labels
+              self.y: batch_labels
           })
           errD_real = self.d_loss_real.eval({
               self.inputs: batch_images,
@@ -262,29 +307,30 @@ class DCGAN(object):
         else:
           # Update D network
           _, summary_str = self.sess.run([d_optim, self.d_sum],
-            feed_dict={ self.inputs: batch_images, self.z: batch_z })
+            feed_dict={self.inputs: batch_images, self.z: batch_z,
+                self.heldout_inputs: heldout_sample_inputs})
           self.writer.add_summary(summary_str, counter)
 
           # Update G network
           _, summary_str = self.sess.run([g_optim, self.g_sum],
             feed_dict={ self.z: batch_z })
           self.writer.add_summary(summary_str, counter)
-
-          # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
           _, summary_str = self.sess.run([g_optim, self.g_sum],
             feed_dict={ self.z: batch_z })
           self.writer.add_summary(summary_str, counter)
           
-          errD_fake = self.d_loss_fake.eval({ self.z: batch_z })
-          errD_real = self.d_loss_real.eval({ self.inputs: batch_images })
+          errD_fake = self.d_loss_fake.eval({self.z: batch_z})
+          errD_real = self.d_loss_real.eval({self.inputs: batch_images})
+          errD_real_heldout = self.d_loss_real_heldout.eval({self.inputs: heldout_sample_inputs,
+              self.heldout_inputs: heldout_sample_inputs})
           errG = self.g_loss.eval({self.z: batch_z})
 
         counter += 1
-        print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
-          % (epoch, idx, batch_idxs,
-            time.time() - start_time, errD_fake+errD_real, errG))
+        print("Epoch: [%2d] [%4d/%4d] time: %.1f, d_loss(gen, insample, heldout): (%.2f, %.2f, %.2f), g_loss: %.2f" \
+          % (epoch, idx, batch_idxs, time.time() - start_time, errD_fake,
+             errD_real, errD_real_heldout, errG))
 
-        if np.mod(counter, 100) == 1:
+        if np.mod(counter, 1000) == 1:
           if config.dataset == 'mnist':
             samples, d_loss, g_loss = self.sess.run(
               [self.sampler, self.d_loss, self.g_loss],
@@ -331,7 +377,14 @@ class DCGAN(object):
         h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim*8, name='d_h3_conv')))
         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
 
-        return tf.nn.sigmoid(h4), h4
+        # Manual toggle for fully-connected layers.
+        if 0:
+          h5 = tf.layers.dense(inputs=tf.reshape(h3, [self.batch_size, -1]), units=1024, activation=tf.nn.relu) 
+          h6 = tf.layers.dense(h5, units=100, activation=tf.nn.relu) 
+          return tf.nn.sigmoid(h6), h6
+        else:
+          return tf.nn.sigmoid(h4), h4
+
       else:
         yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
         x = conv_cond_concat(image, yb)
