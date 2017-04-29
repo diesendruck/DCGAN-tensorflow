@@ -19,7 +19,8 @@ class DCGAN(object):
          batch_size=64, sample_num = 64, output_height=64, output_width=64,
          y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
          gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
-         input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None):
+         input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None,
+         log_dir=None, expt_name=None):
     """
 
     Args:
@@ -72,7 +73,10 @@ class DCGAN(object):
 
     self.dataset_name = dataset_name
     self.input_fname_pattern = input_fname_pattern
+    self.expt_name = expt_name
     self.checkpoint_dir = checkpoint_dir
+    self.sample_dir = sample_dir
+    self.log_dir = log_dir
     self.build_model()
 
   def build_model(self):
@@ -166,6 +170,11 @@ class DCGAN(object):
 
   def train(self, config):
     """Train DCGAN"""
+    # Organize outputs according to experiment name.
+    self.sample_dir = "./samples/samples_"+self.expt_name
+    self.checkpoint_dir = "./checkpoints/checkpoints_"+self.expt_name
+    self.log_dir = "./logs/logs_"+self.expt_name
+
     if config.dataset == 'mnist':
       data_X, data_y = self.load_mnist()
     else:
@@ -188,11 +197,7 @@ class DCGAN(object):
         self.d_loss_fake_sum, self.g_loss_sum])
     self.d_sum = merge_summary([self.z_sum, self.d_sum, self.d_loss_real_sum,
         self.d_loss_sum, self.d_loss_real_heldout_sum, self.d_loss_heldout_sum])
-    try:
-      tag = config.sample_dir.split("/")[1].split("_")[1]
-      self.writer = SummaryWriter("./logs/logs_"+tag, self.sess.graph)
-    except:
-      self.writer = SummaryWriter("./logs", self.sess.graph)
+    self.writer = SummaryWriter(self.log_dir, self.sess.graph)
 
     # Load fixed sample_z, or generate one.
     if config.fixed_z:
@@ -285,12 +290,10 @@ class DCGAN(object):
           self.writer.add_summary(summary_str, counter)
 
           # Update G network, twice.
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={self.z: batch_z, self.y: batch_labels})
-          self.writer.add_summary(summary_str, counter)
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={self.z: batch_z, self.y: batch_labels})
-          self.writer.add_summary(summary_str, counter)
+          for _ in range(2):
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={self.z: batch_z, self.y: batch_labels})
+              self.writer.add_summary(summary_str, counter)
           
           errD_fake = self.d_loss_fake.eval({
               self.z: batch_z, 
@@ -311,13 +314,11 @@ class DCGAN(object):
                 self.heldout_inputs: heldout_sample_inputs})
           self.writer.add_summary(summary_str, counter)
 
-          # Update G network
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={ self.z: batch_z })
-          self.writer.add_summary(summary_str, counter)
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={ self.z: batch_z })
-          self.writer.add_summary(summary_str, counter)
+          # Update G network, twice.
+          for _ in range(2):
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={self.z: batch_z})
+              self.writer.add_summary(summary_str, counter)
           
           errD_fake = self.d_loss_fake.eval({self.z: batch_z})
           errD_real = self.d_loss_real.eval({self.inputs: batch_images})
@@ -330,7 +331,7 @@ class DCGAN(object):
           % (epoch, idx, batch_idxs, time.time() - start_time, errD_fake,
              errD_real, errD_real_heldout, errG))
 
-        if np.mod(counter, 1000) == 1:
+        if np.mod(counter, 500) == 1:
           if config.dataset == 'mnist':
             samples, d_loss, g_loss = self.sess.run(
               [self.sampler, self.d_loss, self.g_loss],
@@ -342,8 +343,8 @@ class DCGAN(object):
             )
             manifold_h = int(np.ceil(np.sqrt(samples.shape[0])))
             manifold_w = int(np.floor(np.sqrt(samples.shape[0])))
-            save_images(samples, [manifold_h, manifold_w],
-                  './{}/train_{:02d}_{:04d}.png'.format(config.sample_dir, epoch, idx))
+            save_images(samples, [manifold_h, manifold_w], self.sample_dir,
+                  'train_{:02d}_{:04d}.png'.format(epoch, idx))
             print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss)) 
           else:
             try:
@@ -356,14 +357,14 @@ class DCGAN(object):
               )
               manifold_h = int(np.ceil(np.sqrt(samples.shape[0])))
               manifold_w = int(np.floor(np.sqrt(samples.shape[0])))
-              save_images(samples, [manifold_h, manifold_w],
-                    './{}/train_{:02d}_{:04d}.png'.format(config.sample_dir, epoch, idx))
+              save_images(samples, [manifold_h, manifold_w], self.sample_dir,
+                    'train_{:02d}_{:04d}.png'.format(epoch, idx))
               print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss)) 
             except:
               print("one pic error!...")
 
         if np.mod(counter, 500) == 2:
-          self.save(config.checkpoint_dir, counter)
+          self.save(self.checkpoint_dir, counter)
 
   def discriminator(self, image, y=None, reuse=False):
     with tf.variable_scope("discriminator") as scope:
@@ -378,10 +379,10 @@ class DCGAN(object):
         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
 
         # Manual toggle for fully-connected layers.
-        if 1:
-          h5 = tf.layers.dense(inputs=tf.reshape(h3, [self.batch_size, -1]), units=100, activation=tf.nn.relu)
-          #h6 = tf.layers.dense(h5, units=100, activation=tf.nn.relu)
-          h7 = linear(tf.reshape(h5, [self.batch_size, -1]), 1, 'd_h5_lin')
+        if 0:
+          h5 = tf.layers.dense(inputs=tf.reshape(h3, [self.batch_size, -1]), units=1024, activation=tf.nn.relu)
+          h6 = tf.layers.dense(h5, units=100, activation=tf.nn.relu)
+          h7 = linear(tf.reshape(h6, [self.batch_size, -1]), 1, 'd_h6_lin')
           return tf.nn.sigmoid(h7), h7
 
         else:

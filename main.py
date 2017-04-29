@@ -21,8 +21,10 @@ flags.DEFINE_integer("c_dim", 3, "Dimension of image color. [3]")
 flags.DEFINE_integer("z_dim", 100, "Dimension of random input to generator. [100]")
 flags.DEFINE_string("dataset", "celebA", "The name of dataset [celebA, mnist, lsun]")
 flags.DEFINE_string("input_fname_pattern", "*.jpg", "Glob pattern of filename of input images [*]")
-flags.DEFINE_string("checkpoint_dir", "checkpoint", "Directory name to save the checkpoints [checkpoint]")
-flags.DEFINE_string("sample_dir", "samples", "Directory name to save the image samples [samples]")
+flags.DEFINE_string("checkpoint_dir", "checkpoints/checkpoints_test", "Directory name to save the checkpoints [checkpoints]")
+flags.DEFINE_string("sample_dir", "samples/samples_test", "Directory name to save the image samples [samples]")
+flags.DEFINE_string("log_dir", "logs/logs_test", "Directory name to save the logs [logs]")
+flags.DEFINE_string("expt_name", "test", "Experiment name, for naming logs, samples, and checkpoint dirs. [test]")
 flags.DEFINE_boolean("is_train", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("is_crop", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("visualize", False, "True for visualizing, False for nothing [False]")
@@ -63,7 +65,9 @@ def main(_):
           input_fname_pattern=FLAGS.input_fname_pattern,
           is_crop=FLAGS.is_crop,
           checkpoint_dir=FLAGS.checkpoint_dir,
-          sample_dir=FLAGS.sample_dir)
+          sample_dir=FLAGS.sample_dir,
+          log_dir=FLAGS.log_dir,
+          expt_name=FLAGS.expt_name)
     else:
       dcgan = DCGAN(
           sess,
@@ -74,11 +78,14 @@ def main(_):
           batch_size=FLAGS.batch_size,
           sample_num=FLAGS.batch_size,
           c_dim=FLAGS.c_dim,
+          z_dim=FLAGS.z_dim,
           dataset_name=FLAGS.dataset,
           input_fname_pattern=FLAGS.input_fname_pattern,
           is_crop=FLAGS.is_crop,
           checkpoint_dir=FLAGS.checkpoint_dir,
-          sample_dir=FLAGS.sample_dir)
+          sample_dir=FLAGS.sample_dir,
+          log_dir=FLAGS.log_dir,
+          expt_name=FLAGS.expt_name)
 
     show_all_variables()
     if FLAGS.is_train:

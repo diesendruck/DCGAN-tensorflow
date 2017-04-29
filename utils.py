@@ -2,6 +2,7 @@
 Some codes from https://github.com/Newmu/dcgan_code
 """
 from __future__ import division
+import os
 import math
 import json
 import random
@@ -29,7 +30,11 @@ def get_image(image_path, input_height, input_width,
   return transform(image, input_height, input_width,
                    resize_height, resize_width, is_crop)
 
-def save_images(images, size, image_path):
+def save_images(images, size, dest_dir, filename):
+  if not os.path.exists(dest_dir):
+    os.makedirs(dest_dir)
+    print "make dir", dest_dir
+  image_path = "{}/{}".format(dest_dir, filename)
   return imsave(inverse_transform(images), size, image_path)
 
 def imread(path, is_grayscale = False):
