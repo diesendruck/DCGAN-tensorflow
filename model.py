@@ -7,6 +7,7 @@ from glob import glob
 import tensorflow as tf
 import numpy as np
 from six.moves import xrange
+import pdb
 
 from ops import *
 from utils import *
@@ -206,7 +207,6 @@ class DCGAN(object):
         sample_z = np.load(filepath_sample_z_fixed)
         print("Found stored fixed_z.")
       except:
-        print("Inside except")
         raise ValueError("Could not load.", filepath_sample_z_fixed) 
     else:
       sample_z = np.random.uniform(-1, 1, size=(self.sample_num , self.z_dim))
@@ -239,6 +239,10 @@ class DCGAN(object):
       else:
         sample_inputs = np.array(sample).astype(np.float32)
         heldout_sample_inputs = np.array(heldout).astype(np.float32)
+        print heldout_sample_inputs[0]
+        print heldout_sample_inputs.shape
+        pdb.set_trace()
+        sys.exit("here")
   
     counter = 1
     start_time = time.time()
